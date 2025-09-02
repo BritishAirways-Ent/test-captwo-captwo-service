@@ -1,0 +1,2 @@
+# Ignore workflow files so they are not synced to created repos
+README.md

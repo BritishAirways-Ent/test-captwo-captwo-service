@@ -1,0 +1,101 @@
+name: Trigger Maven Release Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'Release version (e.g., 1.31.0)'
+        required: true
+      main_dev_version:
+        description: 'Main branch version after release (e.g., 1.32.0-SNAPSHOT)'
+        required: false
+      domain:
+        description: 'Domain (e.g., aaui,bgm)'
+        required: true
+      service:
+        description: 'Service name (e.g., alw, abam)'
+        required: true
+      branch:
+        description: 'Branch to release from (e.g., release-1.49 or main)'
+        required: true
+
+jobs:
+  trigger-pipeline:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Generate GitHub App Token
+        id: generate-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: BritishAirways-Ent
+
+      - name: Annotate input parameters
+        run: |
+          {
+            echo "### Maven Release Trigger Inputs"
+            echo ""
+            echo "| Parameter | Value |"
+            echo "|-----------|-------|"
+            echo "| **Release Version** | \`${{ github.event.inputs.release_version }}\` |"
+            echo "| **Main Dev Version** | \`${{ github.event.inputs.main_dev_version || 'N/A' }}\` |"
+            echo "| **Domain** | \`${{ github.event.inputs.domain }}\` |"
+            echo "| **Service** | \`${{ github.event.inputs.service }}\` |"
+            echo "| **Branch** | \`${{ github.event.inputs.branch }}\` |"
+          } >> $GITHUB_STEP_SUMMARY
+    
+
+      - name: Trigger Perform_Maven_Release.yaml in ba-captwo-service-pipeline
+        env:
+          GH_TOKEN: ${{ steps.generate-token.outputs.token }}
+        run: |
+          curl -X POST https://api.github.com/repos/BritishAirways-Ent/ba-captwo-service-pipeline/dispatches \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: token $GH_TOKEN" \
+            -d @- <<EOF
+          {
+            "event_type": "trigger-maven-release",
+            "client_payload": {
+              "release_version": "${{ github.event.inputs.release_version }}",
+              "main_dev_version": "${{ github.event.inputs.main_dev_version }}",
+              "domain": "${{ github.event.inputs.domain }}",
+              "service": "${{ github.event.inputs.service }}",
+              "branch": "${{ github.event.inputs.branch }}"
+            }
+          }
+          EOF
+
+      - name: Get Perform_Maven_Release.yaml workflow run URL
+        env:
+          GH_TOKEN: ${{ steps.generate-token.outputs.token }}
+        run: |
+          echo " Waiting for workflow run to start..."
+          sleep 15
+      
+          echo " Searching for latest run of Perform_Maven_Release.yaml..."
+      
+          WORKFLOW_ID=$(gh api repos/BritishAirways-Ent/ba-captwo-service-pipeline/actions/workflows \
+            -H "Authorization: token $GH_TOKEN" \
+            | jq -r '.workflows[] | select(.name == "Perform Maven Release") | .id')
+      
+          for i in {1..5}; do
+            echo " Attempt $i to find the workflow run..."
+            RUN_URL=$(gh api repos/BritishAirways-Ent/ba-captwo-service-pipeline/actions/workflows/$WORKFLOW_ID/runs \
+              -H "Authorization: token $GH_TOKEN" \
+              | jq -r '
+                  .workflow_runs[]
+                  | select(.event == "repository_dispatch")
+                  | .html_url' \
+              | head -n 1)
+      
+            if [[ -n "$RUN_URL" ]]; then
+              echo "::notice title=Perform Maven Release Triggered::[Click here to view the maven perform release workflow run]($RUN_URL)"
+              exit 0
+            fi
+            sleep 10
+          done
+      
+          echo "::warning title=Trigger Failed::Could not find the workflow run URL after multiple attempts."
+          exit 1

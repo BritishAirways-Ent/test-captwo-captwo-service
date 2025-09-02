@@ -1,0 +1,84 @@
+name: Trigger Central Build test
+
+on:
+  push:
+    branches:
+      - main
+      - release-*
+      - feature-*
+    paths-ignore:
+      - '.github/workflows/**'
+  # Workflow_dispatch testing job added extra
+  workflow_dispatch:
+    inputs:
+      domain:
+        description: 'Enter the domain name'
+        required: true
+      service:
+        description: 'Enter the service name'
+        required: true
+      branch_type:
+        description: 'Enter the branch type (e.g. main, release-x, feature-x)'
+        required: true
+    
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    outputs:
+      github_token: ${{ steps.generate-token.outputs.token }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+          
+      - name: Set domain and service dynamically
+        id: set-vars
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "domain=${{ github.event.inputs.domain }}" >> $GITHUB_OUTPUT
+            echo "service=${{ github.event.inputs.service }}" >> $GITHUB_OUTPUT
+            echo "branch_type=${{ github.event.inputs.branch_type }}" >> $GITHUB_OUTPUT
+          else
+            REPO_NAME=$(basename "${{ github.repository }}")
+            DOMAIN=$(echo "$REPO_NAME" | cut -d'-' -f1)
+            SERVICE=$(echo "$REPO_NAME" | cut -d'-' -f2)
+            echo "domain=$DOMAIN" >> $GITHUB_OUTPUT
+            echo "service=$SERVICE" >> $GITHUB_OUTPUT
+            echo "branch_type=$BRANCH_TYPE" >> $GITHUB_OUTPUT
+          fi
+
+          
+      - name: Generate GitHub App Token
+        id: generate-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: BritishAirways-Ent
+          
+      - name: Trigger repository_dispatch event
+        env:
+          token: ${{ steps.generate-token.outputs.token }}
+          TARGET_REPO: BritishAirways-Ent/ba-captwo-service-pipeline
+          EVENT_TYPE: build-target-job
+          DOMAIN: ${{ steps.set-vars.outputs.domain }}
+          SERVICE: ${{ steps.set-vars.outputs.service }}
+          BRANCH_TYPE: ${{ steps.set-vars.outputs.branch_type }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref }}
+          SHA: ${{ github.sha }}          
+        run: |
+          echo "emaild id : $COMMIT_EMAIL"
+          curl -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $token" \
+            https://api.github.com/repos/$TARGET_REPO/dispatches \
+            -d "$(jq -n \
+                  --arg et "$EVENT_TYPE" \
+                  --arg domain "$DOMAIN" \
+                  --arg service "$SERVICE" \
+                  --arg repo "$REPO" \
+                  --arg ref "$REF" \
+                  --arg sha "$SHA" \
+                  --arg actor "${{ github.actor }}" \
+                  --arg branch_type "$BRANCH_TYPE" \
+                  '{event_type: $et, client_payload: {domain: $domain, service: $service, repo: $repo, ref: $ref, sha: $sha, actor: $actor, branch_type: $branch_type}}')"

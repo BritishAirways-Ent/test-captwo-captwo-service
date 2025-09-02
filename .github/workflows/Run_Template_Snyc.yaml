@@ -1,0 +1,42 @@
+name: Run Sync Template to Target
+
+on:
+  workflow_dispatch:
+
+env:
+  SOURCE_BRANCH: main
+  SOURCE_REPOSITORY: BritishAirways-Ent/ba-captwo-service-build-template
+    
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  repo-sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Generate GitHub App Token
+        id: generate-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: BritishAirways-Ent
+
+        
+      - name: Checkout
+        uses: actions/checkout@v4
+        if: github.repository != env.SOURCE_REPOSITORY
+        with:
+          token: ${{ steps.generate-token.outputs.token }}
+
+      - name: actions-template-sync
+        uses: AndreasAugustin/actions-template-sync@v2
+        if: github.repository != env.SOURCE_REPOSITORY
+        with:
+          source_gh_token: ${{ steps.generate-token.outputs.token }}
+          source_repo_path: ${{ env.SOURCE_REPOSITORY }}
+          upstream_branch: ${{ env.SOURCE_BRANCH }}
+          pr_title: "[actions-template-sync] Upstream template update"
+          pr_commit_msg: "chore(template): upstream template update"
